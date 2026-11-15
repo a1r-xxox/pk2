@@ -1,0 +1,162 @@
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local TARGET_KEYWORD = "penyta"
+local MAX_DISPLAY_DISTANCE = 150
+
+if PlayerGui:FindFirstChild("PumpkinTrackerHUD") then
+    PlayerGui.PumpkinTrackerHUD:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PumpkinTrackerHUD"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = PlayerGui
+
+local hudFrame = Instance.new("Frame")
+hudFrame.Size = UDim2.new(0, 190, 0, 85)
+hudFrame.Position = UDim2.new(0, 20, 0, 20)
+hudFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+hudFrame.BackgroundTransparency = 0.35
+hudFrame.BorderSizePixel = 0
+hudFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = hudFrame
+
+local hudLabel = Instance.new("TextLabel")
+hudLabel.Size = UDim2.new(1, -12, 1, -12)
+hudLabel.Position = UDim2.new(0, 6, 0, 6)
+hudLabel.BackgroundTransparency = 1
+hudLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+hudLabel.TextStrokeTransparency = 0
+hudLabel.TextSize = 13
+hudLabel.TextXAlignment = Enum.TextXAlignment.Left
+hudLabel.TextYAlignment = Enum.TextYAlignment.Top
+hudLabel.Text = "南瓜雷達\n存活數量: 0\n最近距離: 無\n狀態: 運行中"
+hudLabel.Parent = hudFrame
+
+local activePumpkins = {}
+local currentHumanoidRootPart = nil
+
+local function setupCharacter(char)
+    currentHumanoidRootPart = char:WaitForChild("HumanoidRootPart", 5)
+end
+
+if LocalPlayer.Character then
+    setupCharacter(LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    setupCharacter(char)
+end)
+
+local function isTargetObject(obj)
+    if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
+    local nameLower = obj.Name:lower()
+    if string.find(nameLower, TARGET_KEYWORD) then
+        return true
+    end
+    return false
+end
+
+local function applyTracker(obj)
+    local targetModel = obj:IsA("Model") and obj or obj.Parent
+    if not targetModel or targetModel:FindFirstChild("EventHighlight") then return end
+
+    table.insert(activePumpkins, targetModel)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "EventHighlight"
+    highlight.FillColor = Color3.fromRGB(255, 120, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = targetModel
+
+    local targetPart = targetModel:IsA("Model") and (targetModel.PrimaryPart or targetModel:FindFirstChildWhichIsA("BasePart")) or targetModel
+    if targetPart then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "EventTag"
+        billboard.Size = UDim2.new(0, 100, 0, 24)
+        billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = MAX_DISPLAY_DISTANCE
+        billboard.Parent = targetPart
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.TextColor3 = Color3.fromRGB(255, 215, 0)
+        label.TextStrokeTransparency = 0
+        label.TextSize = 12
+        label.Parent = billboard
+
+        targetModel.AncestryChanged:Connect(function(_, parent)
+            if not parent then
+                for i, p in ipairs(activePumpkins) do
+                    if p == targetModel then
+                        table.remove(activePumpkins, i)
+                        break
+                    end
+                end
+            end
+        end)
+
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            if not targetModel.Parent or not targetPart.Parent then
+                conn:Disconnect()
+                return
+            end
+            if currentHumanoidRootPart and currentHumanoidRootPart.Parent then
+                local dist = math.floor((currentHumanoidRootPart.Position - targetPart.Position).Magnitude)
+                label.Text = "南瓜 [" .. dist .. "m]"
+                
+                if dist > 80 then
+                    label.TextSize = 10
+                else
+                    label.TextSize = 13
+                end
+            end
+        end)
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    local closestDist = 99999
+
+    for i = #activePumpkins, 1, -1 do
+        local p = activePumpkins[i]
+        if not p or not p.Parent then
+            table.remove(activePumpkins, i)
+        else
+            if currentHumanoidRootPart and currentHumanoidRootPart.Parent then
+                local part = p:IsA("Model") and (p.PrimaryPart or p:FindFirstChildWhichIsA("BasePart")) or p
+                if part then
+                    local dist = (currentHumanoidRootPart.Position - part.Position).Magnitude
+                    if dist < closestDist then
+                        closestDist = dist
+                    end
+                end
+            end
+        end
+    end
+
+    local count = #activePumpkins
+    local distStr = (closestDist == 99999 or count == 0) and "無" or (math.floor(closestDist) .. "m")
+    
+    hudLabel.Text = string.format("南瓜雷達\n存活數量: %d\n最近距離: %s\n狀態: 運行中", count, distStr)
+end)
+
+for _, child in ipairs(Workspace:GetDescendants()) do
+    if isTargetObject(child) then applyTracker(child) end
+end
+
+Workspace.DescendantAdded:Connect(function(child)
+    task.wait(0.2)
+    if isTargetObject(child) then applyTracker(child) end
+end)
